@@ -1615,7 +1615,7 @@ body {
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-with gr.Blocks(title="Hybrid Movie Recommender", css=CSS) as demo:
+with gr.Blocks(title="Hybrid Movie Recommender") as demo:
 
     # Header
     gr.HTML("""
@@ -1733,4 +1733,4 @@ with gr.Blocks(title="Hybrid Movie Recommender", css=CSS) as demo:
 demo.queue()
 
 if __name__ == "__main__":
-    demo.launch(show_error=True)
+    demo.launch(show_error=True, css=CSS)
