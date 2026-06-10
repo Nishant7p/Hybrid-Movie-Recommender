@@ -81,7 +81,7 @@ for uid, udf in _user_df.items():
     _user_candidates[uid] = [
         items_lookup.get(int(iid), {}).get("title", f"Item {iid}")
         for iid in udf_sorted["item_id"].tolist()
-    ]
+    ][:50]  # limit dropdown to top 50 candidates
 print("Pre-indexing complete.")
 
 pipeline_metrics = {}
@@ -437,31 +437,45 @@ def get_recs_html(user_id: int) -> str:
     return "".join(cards)
 
 
-def on_user_select(user_id: int):
+# ── Pre-compute ALL per-user HTML at startup ─────────────────────────────────
+# This makes every callback a pure dict lookup — zero computation at request time.
+print("Pre-computing displays for all users...")
+_cached_html: dict[int, tuple[str, str, str]] = {}
+for _uid in all_users:
+    _cached_html[_uid] = (
+        get_top_summary_html(_uid),
+        get_recs_html(_uid),
+        get_history_html(_uid),
+    )
+# Free DataFrames no longer needed (saves ~200 MB on HF free tier)
+del df_all, _user_top20
+print(f"Pre-computation complete — {len(_cached_html)} users cached.")
+
+_PRED_PLACEHOLDER = (
+    "<div style='display:flex;align-items:center;justify-content:center;"
+    "flex-direction:column;gap:12px;color:#6b6b99;padding:40px 20px'>"
+    "<div style='font-size:2.5rem;opacity:0.3'>🎬</div>"
+    "<div style='font-size:0.82rem'>Select a movie to see prediction details</div></div>"
+)
+
+
+def on_user_select(user_id):
     try:
         if user_id is None:
-            return "", "", "", gr.update(), ""
-        user_id = int(user_id)
-        summary_html = get_top_summary_html(user_id)
-        history_html = get_history_html(user_id)
-        recs_html    = get_recs_html(user_id)
-        candidates   = get_candidates_for_user(user_id)
-        pred_placeholder = (
-            "<div style='display:flex;align-items:center;justify-content:center;"
-            "flex-direction:column;gap:12px;color:#6b6b99;padding:40px 20px'>"
-            "<div style='font-size:2.5rem;opacity:0.3'>🎬</div>"
-            "<div style='font-size:0.82rem'>Select a movie to see prediction details</div></div>"
-        )
+            return "", "", "", gr.Dropdown(choices=[], value=None), ""
+        uid = int(user_id)
+        summary, recs, history = _cached_html.get(uid, ("", "", ""))
+        cands = _user_candidates.get(uid, [])
         return (
-            summary_html,
-            recs_html,
-            history_html,
-            gr.update(choices=candidates, value=candidates[0] if candidates else None),
-            pred_placeholder,
+            summary,
+            recs,
+            history,
+            gr.Dropdown(choices=cands, value=cands[0] if cands else None),
+            _PRED_PLACEHOLDER,
         )
     except Exception as e:
-        err = f"<p style='color:#ff6e6e'>Error loading user {user_id}: {e}</p>"
-        return err, err, err, gr.update(), err
+        err = f"<p style='color:#ff6e6e'>Error: {e}</p>"
+        return err, err, err, gr.Dropdown(choices=[], value=None), err
 
 
 def on_movie_select(user_id: int, movie_title: str) -> str:
@@ -1650,11 +1664,11 @@ with gr.Blocks(title="Hybrid Movie Recommender") as demo:
                         "<span style='font-size:0.72rem;font-weight:600;text-transform:uppercase;"
                         "letter-spacing:0.08em;color:#6b6b99'>Watch History</span></div>"
                     )
-                    history_html = gr.HTML(value=get_history_html(all_users[0]))
+                    history_html = gr.HTML(value=_cached_html[all_users[0]][2])
 
                 # ── MIDDLE: metrics + recs ────────────────────────────────────
                 with gr.Column(scale=2):
-                    summary_html = gr.HTML(value=get_top_summary_html(all_users[0]))
+                    summary_html = gr.HTML(value=_cached_html[all_users[0]][0])
                     gr.HTML(
                         "<div style='display:flex;align-items:center;gap:8px;margin:10px 0 8px'>"
                         "<div style='width:6px;height:6px;border-radius:50%;background:#bd93f9;"
@@ -1662,7 +1676,7 @@ with gr.Blocks(title="Hybrid Movie Recommender") as demo:
                         "<span style='font-size:0.72rem;font-weight:600;text-transform:uppercase;"
                         "letter-spacing:0.08em;color:#6b6b99'>Top-20 Recommendations</span></div>"
                     )
-                    recs_html = gr.HTML(value=get_recs_html(all_users[0]))
+                    recs_html = gr.HTML(value=_cached_html[all_users[0]][1])
 
                 # ── RIGHT: movie picker + prediction ──────────────────────────
                 with gr.Column(scale=1, min_width=300):
@@ -1701,21 +1715,18 @@ with gr.Blocks(title="Hybrid Movie Recommender") as demo:
             gr.HTML(PIPELINE_HTML)
 
     # ── Events ───────────────────────────────────────────────────────────────
-    user_change_event = user_dd.change(
+    user_dd.change(
         fn=on_user_select,
         inputs=user_dd,
         outputs=[summary_html, recs_html, history_html, movie_dd, prediction_html],
-        concurrency_limit=1,
-        cancels=[],
     )
     predict_btn.click(
         fn=on_movie_select,
         inputs=[user_dd, movie_dd],
         outputs=prediction_html,
-        concurrency_limit=1,
     )
 
-demo.queue(default_concurrency_limit=1)
+demo.queue()
 
 if __name__ == "__main__":
     demo.launch(
