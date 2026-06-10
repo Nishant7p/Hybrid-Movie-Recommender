@@ -1,14 +1,3 @@
----
-title: Hybrid Movie Recommender
-emoji: 🎬
-colorFrom: purple
-colorTo: pink
-sdk: gradio
-sdk_version: "6.0.0"
-app_file: app.py
-pinned: false
----
-
 <h1 align="center">Hybrid Movie Recommendation System</h1>
 
 <p align="center">

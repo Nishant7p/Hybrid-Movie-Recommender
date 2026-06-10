@@ -20,8 +20,10 @@ __pycache__/
 outputs/
 multirun/
 
-# Model checkpoints
-checkpoints/
+# Model checkpoints (keep .pkl for meta-learner)
+checkpoints/*.ckpt
+checkpoints/*.pt
+checkpoints/*.bin
 *.ckpt
 *.pt
 *.bin
@@ -43,4 +45,3 @@ data/raw/
 pipeline_flowchart.png
 .claude/settings.local.json
 .gradio/
-data/processed/*.parquet
