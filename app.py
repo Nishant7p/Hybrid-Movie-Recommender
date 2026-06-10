@@ -461,10 +461,13 @@ _PRED_PLACEHOLDER = (
 
 def on_user_select(user_id):
     try:
-        if user_id is None:
+        if user_id is None or user_id == "":
             return "", "", "", gr.Dropdown(choices=[], value=None), ""
         uid = int(user_id)
-        summary, recs, history = _cached_html.get(uid, ("", "", ""))
+        if uid not in _cached_html:
+            msg = f"<p style='color:#ff6e6e'>User {uid} not found.</p>"
+            return msg, "", "", gr.Dropdown(choices=[], value=None), ""
+        summary, recs, history = _cached_html[uid]
         cands = _user_candidates.get(uid, [])
         return (
             summary,
@@ -1612,7 +1615,7 @@ body {
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-with gr.Blocks(title="Hybrid Movie Recommender") as demo:
+with gr.Blocks(title="Hybrid Movie Recommender", css=CSS) as demo:
 
     # Header
     gr.HTML("""
@@ -1651,10 +1654,11 @@ with gr.Blocks(title="Hybrid Movie Recommender") as demo:
                         "letter-spacing:0.08em;color:#6b6b99'>Select User</span></div>"
                     )
                     user_dd = gr.Dropdown(
-                        choices=all_users,
+                        choices=all_users[:200],
                         value=all_users[0],
-                        label="User ID",
+                        label=f"User ID (1 – {all_users[-1]})",
                         filterable=True,
+                        allow_custom_value=True,
                         container=True,
                     )
                     gr.HTML(
@@ -1729,9 +1733,4 @@ with gr.Blocks(title="Hybrid Movie Recommender") as demo:
 demo.queue()
 
 if __name__ == "__main__":
-    demo.launch(
-        show_error=True,
-        css=CSS,
-    )
-    while True:
-        time.sleep(3600)
+    demo.launch(show_error=True)
