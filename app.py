@@ -69,6 +69,21 @@ history_by_user = (
     train.sort_values("timestamp") if "timestamp" in train.columns else train
 ).groupby("user_id")["item_id"].apply(list).to_dict()
 
+# ── Pre-index for O(1) lookups (avoids repeated full-DataFrame scans) ────────
+print("Pre-indexing user data...")
+_user_df: dict[int, pd.DataFrame] = dict(tuple(df_all.groupby("user_id")))
+_user_top20: dict[int, pd.DataFrame] = {
+    uid: udf.nsmallest(20, "rank") for uid, udf in _user_df.items()
+}
+_user_candidates: dict[int, list[str]] = {}
+for uid, udf in _user_df.items():
+    udf_sorted = udf.sort_values("rank")
+    _user_candidates[uid] = [
+        items_lookup.get(int(iid), {}).get("title", f"Item {iid}")
+        for iid in udf_sorted["item_id"].tolist()
+    ]
+print("Pre-indexing complete.")
+
 pipeline_metrics = {}
 metrics_path = RESULTS / "tuned_pipeline.json"
 if metrics_path.exists():
@@ -184,19 +199,13 @@ def score_bar(pct: float, color: str = "#bd93f9", height: int = 5) -> str:
 
 # ── Data functions ────────────────────────────────────────────────────────────
 def get_candidates_for_user(user_id: int) -> list[str]:
-    udf = df_all[df_all["user_id"] == user_id].sort_values("rank")
-    titles = []
-    for iid in udf["item_id"].tolist():
-        meta = items_lookup.get(int(iid), {})
-        titles.append(meta.get("title", f"Item {iid}"))
-    return titles
+    return _user_candidates.get(user_id, [])
 
 
 def get_top_summary_html(user_id: int) -> str:
-    udf = df_all[df_all["user_id"] == user_id].copy()
-    if udf.empty:
+    top = _user_top20.get(user_id)
+    if top is None or top.empty:
         return ""
-    top = udf.nsmallest(20, "rank")
 
     all_genres = set()
     for iid in top["item_id"].tolist():
@@ -391,10 +400,9 @@ def get_history_html(user_id: int) -> str:
 
 
 def get_recs_html(user_id: int) -> str:
-    udf = df_all[df_all["user_id"] == user_id].copy()
-    if udf.empty:
+    top = _user_top20.get(user_id)
+    if top is None or top.empty:
         return "<p style='color:#6b6b99'>No recommendations found.</p>"
-    top = udf.nsmallest(20, "rank")
     cards = []
     for i, (_, row) in enumerate(top.iterrows()):
         meta      = items_lookup.get(int(row["item_id"]), {})
@@ -465,7 +473,8 @@ def on_movie_select(user_id: int, movie_title: str) -> str:
         if item_id is None:
             return "<p style='color:#ff6e6e'>Movie not found.</p>"
 
-        row      = df_all[(df_all["user_id"] == user_id) & (df_all["item_id"] == item_id)]
+        udf = _user_df.get(user_id)
+        row = udf[udf["item_id"] == item_id] if udf is not None else pd.DataFrame()
         meta     = items_lookup.get(item_id, {})
         genres   = meta.get("genres", "?")
         overview = meta.get("overview", "")[:300]
@@ -1692,18 +1701,21 @@ with gr.Blocks(title="Hybrid Movie Recommender") as demo:
             gr.HTML(PIPELINE_HTML)
 
     # ── Events ───────────────────────────────────────────────────────────────
-    user_dd.change(
+    user_change_event = user_dd.change(
         fn=on_user_select,
         inputs=user_dd,
         outputs=[summary_html, recs_html, history_html, movie_dd, prediction_html],
+        concurrency_limit=1,
+        cancels=[],
     )
     predict_btn.click(
         fn=on_movie_select,
         inputs=[user_dd, movie_dd],
         outputs=prediction_html,
+        concurrency_limit=1,
     )
 
-demo.queue()
+demo.queue(default_concurrency_limit=1)
 
 if __name__ == "__main__":
     demo.launch(
